@@ -57,6 +57,20 @@ app.delete("/all-studio/:id", async (req, res) => {
   res.send(result);
 });
 
+app.patch("/all-studio/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await studiosCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: req.body },
+    );
+    res.send(result);
+  } catch (error) {
+    res.status(400).send({ message: "Studio could not be updated." });
+  }
+});
+
 app.get("/featured-studio", async (req, res) => {
   const result = await studiosCollection.find().limit(6).toArray();
 
