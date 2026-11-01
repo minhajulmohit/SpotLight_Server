@@ -18,20 +18,26 @@ Backend REST API for **SpotLight** (Creative Workspace & Production Studio Shari
 ### 1. Studio Endpoints
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/all-studio` | Fetch all studio listings |
-| `GET` | `/all-studio/:id` | Fetch single studio details by ObjectId |
+| `GET` | `/all-studio` | Fetch all studio listings (public) |
+| `GET` | `/all-studio/:id` | Fetch single studio details by ObjectId (public) |
 | `GET` | `/featured-studio` | Fetch top 6 featured studios (`.limit(6)`) |
-| `POST` | `/add-new-studio` | Create a new studio listing |
-| `PATCH` | `/all-studio/:id` | Update studio details by ObjectId |
-| `DELETE` | `/all-studio/:id` | Delete studio listing by ObjectId |
+| `POST` | `/add-new-studio` | Create a studio listing 🔒 JWT required |
+| `PATCH` | `/all-studio/:id` | Update studio details 🔒 JWT + owner only |
+| `DELETE` | `/all-studio/:id` | Delete studio listing 🔒 JWT + owner only |
 
-### 2. Booking Endpoints (Challenge 2 Double-Booking Prevention)
+### 2. Authentication (Challenge 1)
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/bookings` | Submit new booking with **overlap collision check** (returns 409 on collision) |
-| `GET` | `/bookings?email=...` | Retrieve bookings filtered by customer email or host email |
-| `PATCH` | `/bookings/:id/cancel` | Cancel a pending booking request |
-| `PATCH` | `/bookings/:id/status` | Update booking status (`Pending`, `Confirmed`, `Completed`, `Cancelled`) |
+| `POST` | `/jwt` | Issue a 7-day JWT for the logged-in user and store it in an **HTTPOnly** cookie |
+| `POST` | `/jwt/logout` | Clear the JWT cookie |
+
+### 3. Booking Endpoints (Challenge 2 Double-Booking Prevention)
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/bookings` | Submit a booking with **server-side price calculation** and overlap collision check (409) 🔒 JWT required |
+| `GET` | `/bookings?email=...` | Retrieve the signed-in user's bookings (customer or host) 🔒 JWT required |
+| `PATCH` | `/bookings/:id/cancel` | Cancel your own pending booking 🔒 JWT required |
+| `PATCH` | `/bookings/:id/status` | Host-only status update (`Pending`, `Confirmed`, `Completed`, `Cancelled`) 🔒 JWT required |
 
 ---
 
