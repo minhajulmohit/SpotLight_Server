@@ -52,3 +52,4 @@ JWT_SECRET=your_jwt_secret_key
 npm run dev
 ```
 Server runs on [http://localhost:8000](http://localhost:8000).
+
