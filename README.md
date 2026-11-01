@@ -31,7 +31,15 @@ Backend REST API for **SpotLight** (Creative Workspace & Production Studio Shari
 | `POST` | `/jwt` | Issue a 7-day JWT for the logged-in user and store it in an **HTTPOnly** cookie |
 | `POST` | `/jwt/logout` | Clear the JWT cookie |
 
-### 3. Booking Endpoints (Challenge 2 Double-Booking Prevention)
+### 3. Wishlist Endpoints (MongoDB-backed favourites)
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/wishlist` | List every studio saved by the signed-in user 🔒 JWT required |
+| `POST` | `/wishlist` | Toggle a studio in the signed-in user's wishlist 🔒 JWT required |
+
+> Deleting a studio also removes its wishlist rows, so no orphaned saves remain.
+
+### 4. Booking Endpoints (Challenge 2 Double-Booking Prevention)
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/bookings` | Submit a booking with **server-side price calculation** and overlap collision check (409) 🔒 JWT required |

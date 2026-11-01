@@ -39,6 +39,7 @@ export async function connectToMongoDB() {
 const db = client.db("spotlight");
 const studiosCollection = db.collection("studios");
 const bookingsCollection = db.collection("bookings");
+const wishlistsCollection = db.collection("wishlists");
 
 connectToMongoDB();
 
@@ -170,6 +171,8 @@ app.delete("/all-studio/:id", requireAuth, async (req, res) => {
     }
 
     const result = await studiosCollection.deleteOne({ _id: new ObjectId(id) });
+    // Keep wishlists clean so no orphaned saves point at a deleted studio.
+    await wishlistsCollection.deleteMany({ studioId: String(id) });
     res.send(result);
   } catch (error) {
     res.status(400).send({ message: "Failed to delete studio." });
@@ -215,6 +218,59 @@ app.get("/featured-studio", async (req, res) => {
     res.send(result);
   } catch (error) {
     res.status(500).send({ message: "Failed to fetch featured studios." });
+  }
+});
+
+// ==========================================
+// Wishlist APIs (MongoDB-backed favourites)
+// ==========================================
+
+// Returns every studio the signed-in user has saved.
+app.get("/wishlist", requireAuth, async (req, res) => {
+  try {
+    const wishlist = await wishlistsCollection
+      .find({ userEmail: req.user.email })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.json(wishlist);
+  } catch (error) {
+    console.error("Get wishlist error:", error);
+    res.status(500).json({ message: "Failed to fetch your wishlist." });
+  }
+});
+
+// Toggles a studio in the signed-in user's wishlist.
+app.post("/wishlist", requireAuth, async (req, res) => {
+  try {
+    const studioId = String(req.body?.studioId ?? "").trim();
+
+    if (!ObjectId.isValid(studioId)) {
+      return res.status(400).json({ message: "Invalid studio ID." });
+    }
+
+    const studio = await studiosCollection.findOne({
+      _id: new ObjectId(studioId),
+    });
+    if (!studio) {
+      return res.status(404).json({ message: "Studio not found." });
+    }
+
+    const filter = { userEmail: req.user.email, studioId };
+    const existing = await wishlistsCollection.findOne(filter);
+
+    if (existing) {
+      await wishlistsCollection.deleteOne({ _id: existing._id });
+      return res.json({ saved: false, studioId });
+    }
+
+    await wishlistsCollection.insertOne({
+      ...filter,
+      createdAt: new Date(),
+    });
+    return res.status(201).json({ saved: true, studioId });
+  } catch (error) {
+    console.error("Toggle wishlist error:", error);
+    res.status(500).json({ message: "Failed to update your wishlist." });
   }
 });
 
