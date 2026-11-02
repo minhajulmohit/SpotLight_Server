@@ -9,7 +9,7 @@ Backend REST API for **SpotLight** (Creative Workspace & Production Studio Shari
 * **Runtime:** Node.js (ES Modules)
 * **Framework:** Express.js 5
 * **Database:** MongoDB Atlas (Native MongoDB Node Driver)
-* **Security & Tools:** CORS, dotenv, JSON Web Token (JWT), bcryptjs, cookie-parser
+* **Security & Tools:** CORS, dotenv, Better Auth JWKS verification via `jose`
 
 ---
 
@@ -21,31 +21,41 @@ Backend REST API for **SpotLight** (Creative Workspace & Production Studio Shari
 | `GET` | `/all-studio` | Fetch all studio listings (public) |
 | `GET` | `/all-studio/:id` | Fetch single studio details by ObjectId (public) |
 | `GET` | `/featured-studio` | Fetch top 6 featured studios (`.limit(6)`) |
-| `POST` | `/add-new-studio` | Create a studio listing 🔒 JWT required |
+| `GET` | `/availability?studioId=...&bookingDate=...` | Fetch booked times for one studio and date (public) |
+| `POST` | `/add-new-studio` | Create a studio listing 🔒 Bearer JWT required |
 | `PATCH` | `/all-studio/:id` | Update studio details 🔒 JWT + owner only |
 | `DELETE` | `/all-studio/:id` | Delete studio listing 🔒 JWT + owner only |
 
 ### 2. Authentication (Challenge 1)
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/jwt` | Issue a 7-day JWT for the logged-in user and store it in an **HTTPOnly** cookie |
-| `POST` | `/jwt/logout` | Clear the JWT cookie |
 
-### 3. Wishlist Endpoints (MongoDB-backed favourites)
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/wishlist` | List every studio saved by the signed-in user 🔒 JWT required |
-| `POST` | `/wishlist` | Toggle a studio in the signed-in user's wishlist 🔒 JWT required |
+The browser sends its Better Auth HTTPOnly session cookie to the same-origin
+Next.js `/api/backend/*` proxy. The proxy obtains the signed JWT server-side
+from Better Auth and forwards it to Express; the token is not exposed to
+browser JavaScript.
 
-> Deleting a studio also removes its wishlist rows, so no orphaned saves remain.
+```
+Authorization: Bearer <jwt>
+```
 
-### 4. Booking Endpoints (Challenge 2 Double-Booking Prevention)
+Verification is stateless: `jose` fetches Better Auth's public signing keys
+from `${CLIENT_URL}/api/auth/jwks` and checks the token's `iss`/`aud` against
+`CLIENT_URL`. No shared `JWT_SECRET` is used by this server.
+
+| Requirement | Value |
+|---|---|
+| Token source | Next.js proxy reads the HTTPOnly Better Auth session and requests `GET {CLIENT_URL}/api/auth/token` |
+| Signing algorithm | `EdDSA` (`Ed25519`) by default |
+| Public keys | `GET {CLIENT_URL}/api/auth/jwks` |
+| Protected requests | `401` when the token is missing/invalid, `403` for non-owners |
+
+### 3. Booking Endpoints (Challenge 2 Double-Booking Prevention)
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/bookings` | Submit a booking with **server-side price calculation** and overlap collision check (409) 🔒 JWT required |
-| `GET` | `/bookings?email=...` | Retrieve the signed-in user's bookings (customer or host) 🔒 JWT required |
+| `GET` | `/bookings` | Retrieve the signed-in user's customer bookings 🔒 JWT required |
+| `GET` | `/bookings?hostEmail=true` | Retrieve bookings for the signed-in host 🔒 JWT required |
 | `PATCH` | `/bookings/:id/cancel` | Cancel your own pending booking 🔒 JWT required |
-| `PATCH` | `/bookings/:id/status` | Host-only status update (`Pending`, `Confirmed`, `Completed`, `Cancelled`) 🔒 JWT required |
+| `PATCH` | `/bookings/:id/status` | Host confirms pending or completes confirmed bookings 🔒 JWT required |
 
 ---
 
@@ -60,10 +70,11 @@ npm install
 PORT=8000
 MONGODB_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/spotlight?retryWrites=true&w=majority
 CLIENT_URL=http://localhost:3000
-JWT_SECRET=your_jwt_secret_key
+
+# CLIENT_URL must exactly match the client's BETTER_AUTH_URL (scheme + host),
+# because it is used both for CORS and as the JWT issuer/audience + JWKS origin.
 
 # 3. Start development server
 npm run dev
 ```
 Server runs on [http://localhost:8000](http://localhost:8000).
-
