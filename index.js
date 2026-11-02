@@ -23,38 +23,21 @@ app.use(
 );
 
 const client = new MongoClient(process.env.MONGODB_URI);
+let mongoConnection;
 
 export async function connectToMongoDB() {
-  try {
-    await client.connect();
-    console.log("You successfully connected to MongoDB!");
-    return client;
-  } catch (err) {
-    console.error("MongoDB connection failed:", err);
-    throw err;
+  if (!mongoConnection) {
+    mongoConnection = client.connect().catch((error) => {
+      mongoConnection = undefined;
+      console.error("MongoDB connection failed:", error);
+      throw error;
+    });
   }
+  return mongoConnection;
 }
 const db = client.db("spotlight");
 const studiosCollection = db.collection("studios");
 const bookingsCollection = db.collection("bookings");
-
-// connectToMongoDB();
-
-// Start Server After MongoDB Connection
-async function startServer() {
-  try {
-    await connectToMongoDB();
-
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error("Failed to start server:", error);
-    process.exit(1);
-  }
-}
-
-startServer();
 
 // Verify Better Auth JWKS
 
@@ -108,6 +91,16 @@ const ownsStudio = (studio, user) =>
 // Test API
 app.get("/", (req, res) => {
   res.send("Backend Server is Running...!");
+});
+
+app.use(async (req, res, next) => {
+  try {
+    await connectToMongoDB();
+    next();
+  } catch (error) {
+    console.error("Database unavailable:", error);
+    res.status(503).json({ message: "Database unavailable." });
+  }
 });
 
 // ===========
@@ -353,7 +346,10 @@ app.patch("/bookings/:id/status", requireAuth, async (req, res) => {
   res.send(result);
 });
 
-// // Start Server
-// app.listen(PORT, () => {
-//   console.log(`Server running on port ${PORT}`);
-// });
+if (process.env.VERCEL !== "1") {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+export default app;

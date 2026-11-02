@@ -78,3 +78,19 @@ CLIENT_URL=http://localhost:3000
 npm run dev
 ```
 Server runs on [http://localhost:8000](http://localhost:8000).
+
+## Deploy on Vercel
+
+1. Import the repository into Vercel and set **Root Directory** to `spotlight_server`.
+2. Add these server environment variables in Vercel's project settings:
+
+   | Variable | Value |
+   |---|---|
+   | `MONGODB_URI` | Your MongoDB connection string |
+   | `CLIENT_URL` | The deployed client origin, for example `https://spotlight-client.vercel.app` |
+
+   `CLIENT_URL` must be the same origin configured as the client's `BETTER_AUTH_URL`; it is used to fetch Better Auth's JWKS and validate JWT issuer/audience.
+3. Redeploy after saving the environment variables.
+4. Open `https://<your-server-domain>/` to check that the serverless function responds. Check the Vercel function logs if it returns an error. Database routes require the Vercel deployment to be allowed by your MongoDB network access settings.
+
+The Express app is exported for Vercel's Node.js function runtime. Locally, `npm run dev` continues to start the Express listener.
