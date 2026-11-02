@@ -125,7 +125,10 @@ app.get("/all-studio", async (req, res) => {
 
 app.get("/all-studio/:id", async (req, res) => {
   const { id } = req.params;
+  if (!/^[\da-f]{24}$/i.test(id)) return res.sendStatus(404);
+
   const result = await studiosCollection.findOne({ _id: new ObjectId(id) });
+  if (!result) return res.sendStatus(404);
   res.send(result);
 });
 
