@@ -38,6 +38,9 @@ export async function connectToMongoDB() {
 const db = client.db("spotlight");
 const studiosCollection = db.collection("studios");
 const bookingsCollection = db.collection("bookings");
+const newsletterSubscriptionsCollection = db.collection(
+  "newsletterSubscriptions",
+);
 
 // Verify Better Auth JWKS
 
@@ -86,7 +89,7 @@ const requireAuth = async (req, res, next) => {
 };
 
 const ownsStudio = (studio, user) =>
-  normalizeEmail(studio?.hostEmail) === user.email;
+  normalizeEmail(studio?.ownerEmail) === user.email;
 
 // Test API
 app.get("/", (req, res) => {
@@ -107,57 +110,23 @@ app.use(async (req, res, next) => {
 // Studio APIs
 // ===========
 
-app.post("/add-new-studio", requireAuth, async (req, res) => {
+app.post("/api/studios", requireAuth, async (req, res) => {
   const data = {
     ...req.body,
-    hostEmail: req.user.email,
+    ownerName: req.user.name,
+    ownerEmail: req.user.email,
   };
   delete data._id;
-  delete data.ownerEmail;
   const result = await studiosCollection.insertOne(data);
   res.send(result);
 });
 
-app.get("/all-studio", async (req, res) => {
+app.get("/api/studios", async (req, res) => {
   const result = await studiosCollection.find().toArray();
   res.send(result);
 });
 
-app.get("/all-studio/:id", async (req, res) => {
-  const { id } = req.params;
-  if (!/^[\da-f]{24}$/i.test(id)) return res.sendStatus(404);
-
-  const result = await studiosCollection.findOne({ _id: new ObjectId(id) });
-  if (!result) return res.sendStatus(404);
-  res.send(result);
-});
-
-app.delete("/all-studio/:id", requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const studio = await studiosCollection.findOne({ _id: new ObjectId(id) });
-  if (!studio || !ownsStudio(studio, req.user)) return res.sendStatus(403);
-
-  const result = await studiosCollection.deleteOne({ _id: new ObjectId(id) });
-  res.send(result);
-});
-
-app.patch("/all-studio/:id", requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const studio = await studiosCollection.findOne({ _id: new ObjectId(id) });
-  if (!studio || !ownsStudio(studio, req.user)) return res.sendStatus(403);
-
-  const updates = { ...req.body };
-  delete updates._id;
-  delete updates.ownerEmail;
-  delete updates.hostEmail;
-  const result = await studiosCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { $set: updates },
-  );
-  res.send(result);
-});
-
-app.get("/featured-studio", async (req, res) => {
+app.get("/api/studios/featured", async (req, res) => {
   const result = await studiosCollection
     .find()
     .sort({ rating: -1, createdAt: -1 })
@@ -166,7 +135,41 @@ app.get("/featured-studio", async (req, res) => {
   res.send(result);
 });
 
-app.get("/availability", async (req, res) => {
+app.get("/api/studios/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!/^[\da-f]{24}$/i.test(id)) return res.sendStatus(404);
+
+  const result = await studiosCollection.findOne({ _id: new ObjectId(id) });
+  if (!result) return res.sendStatus(404);
+  res.send(result);
+});
+
+app.delete("/api/studios/:id", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const studio = await studiosCollection.findOne({ _id: new ObjectId(id) });
+  if (!studio || !ownsStudio(studio, req.user)) return res.sendStatus(403);
+
+  const result = await studiosCollection.deleteOne({ _id: new ObjectId(id) });
+  res.send(result);
+});
+
+app.patch("/api/studios/:id", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const studio = await studiosCollection.findOne({ _id: new ObjectId(id) });
+  if (!studio || !ownsStudio(studio, req.user)) return res.sendStatus(403);
+
+  const updates = { ...req.body };
+  delete updates._id;
+  delete updates.ownerEmail;
+  delete updates.ownerName;
+  const result = await studiosCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: updates },
+  );
+  res.send(result);
+});
+
+app.get("/api/bookings/availability", async (req, res) => {
   const studioId = String(req.query.studioId ?? "");
   const bookingDate = String(req.query.bookingDate ?? "");
   if (!studioId || !bookingDate) return res.sendStatus(400);
@@ -198,7 +201,7 @@ const toMinutes = (value) => {
 };
 
 // Create a new booking
-app.post("/bookings", requireAuth, async (req, res) => {
+app.post("/api/bookings", requireAuth, async (req, res) => {
   try {
     const { studioId, bookingDate, startTime, endTime, customerName } =
       req.body;
@@ -269,8 +272,8 @@ app.post("/bookings", requireAuth, async (req, res) => {
     const newBooking = {
       studioId: String(studioId),
       studioTitle: studio.title,
-      hostName: studio.hostName || studio.host?.name || "Host",
-      hostEmail: normalizeEmail(studio.hostEmail),
+      ownerName: studio.ownerName || "Studio Owner",
+      ownerEmail: normalizeEmail(studio.ownerEmail),
       customerName:
         String(customerName ?? "").trim() || req.user.name || "Guest Creator",
       customerEmail: req.user.email,
@@ -297,10 +300,10 @@ app.post("/bookings", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/bookings", requireAuth, async (req, res) => {
-  const { hostEmail } = req.query;
-  const query = hostEmail
-    ? { hostEmail: req.user.email }
+app.get("/api/bookings", requireAuth, async (req, res) => {
+  const { ownerEmail } = req.query;
+  const query = ownerEmail
+    ? { ownerEmail: req.user.email }
     : { customerEmail: req.user.email };
 
   const bookings = await bookingsCollection
@@ -311,7 +314,7 @@ app.get("/bookings", requireAuth, async (req, res) => {
 });
 
 // Cancel a pending booking
-app.patch("/bookings/:id/cancel", requireAuth, async (req, res) => {
+app.patch("/api/bookings/:id/cancel", requireAuth, async (req, res) => {
   const { id } = req.params;
   const result = await bookingsCollection.updateOne(
     {
@@ -326,11 +329,11 @@ app.patch("/bookings/:id/cancel", requireAuth, async (req, res) => {
   res.send(result);
 });
 
-// Update status (host confirms or completes a reservation)
-app.patch("/bookings/:id/status", requireAuth, async (req, res) => {
+// Update status (the owner confirms or completes a reservation)
+app.patch("/api/bookings/:id/status", requireAuth, async (req, res) => {
   const { id } = req.params;
   const booking = await bookingsCollection.findOne({ _id: new ObjectId(id) });
-  if (!booking || normalizeEmail(booking.hostEmail) !== req.user.email)
+  if (!booking || normalizeEmail(booking.ownerEmail) !== req.user.email)
     return res.sendStatus(403);
   const nextStatus = req.body.status;
   const currentStatus =
@@ -347,6 +350,28 @@ app.patch("/bookings/:id/status", requireAuth, async (req, res) => {
     { $set: { status: nextStatus, updatedAt: new Date() } },
   );
   res.send(result);
+});
+
+app.post("/api/newsletter", async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ message: "Enter a valid email address." });
+  }
+
+  const existingSubscription =
+    await newsletterSubscriptionsCollection.findOne({ email });
+  if (existingSubscription) {
+    return res.status(409).json({ message: "This email is already subscribed." });
+  }
+
+  const result = await newsletterSubscriptionsCollection.insertOne({
+    email,
+    createdAt: new Date(),
+  });
+  res.status(201).json({
+    message: "Thank you for subscribing.",
+    insertedId: result.insertedId,
+  });
 });
 
 if (process.env.VERCEL !== "1") {

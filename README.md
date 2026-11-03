@@ -18,20 +18,19 @@ Backend REST API for **SpotLight** (Creative Workspace & Production Studio Shari
 ### 1. Studio Endpoints
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/all-studio` | Fetch all studio listings (public) |
-| `GET` | `/all-studio/:id` | Fetch single studio details by ObjectId (public) |
-| `GET` | `/featured-studio` | Fetch top 6 featured studios (`.limit(6)`) |
-| `GET` | `/availability?studioId=...&bookingDate=...` | Fetch booked times for one studio and date (public) |
-| `POST` | `/add-new-studio` | Create a studio listing 🔒 Bearer JWT required |
-| `PATCH` | `/all-studio/:id` | Update studio details 🔒 JWT + owner only |
-| `DELETE` | `/all-studio/:id` | Delete studio listing 🔒 JWT + owner only |
+| `GET` | `/api/studios` | Fetch all studio listings (public) |
+| `GET` | `/api/studios/:id` | Fetch single studio details by ObjectId (public) |
+| `GET` | `/api/studios/featured` | Fetch top 6 featured studios (`.limit(6)`) |
+| `POST` | `/api/studios` | Create a studio listing 🔒 Bearer JWT required |
+| `PATCH` | `/api/studios/:id` | Update studio details 🔒 JWT + owner only |
+| `DELETE` | `/api/studios/:id` | Delete studio listing 🔒 JWT + owner only |
 
 ### 2. Authentication (Challenge 1)
 
-The browser sends its Better Auth HTTPOnly session cookie to the same-origin
-Next.js `/api/backend/*` proxy. The proxy obtains the signed JWT server-side
-from Better Auth and forwards it to Express; the token is not exposed to
-browser JavaScript.
+Browser API requests are forwarded by the existing Next.js `src/proxy.ts`.
+For protected requests, it exchanges the Better Auth HTTPOnly session for a
+JWT, stores the JWT in an HTTPOnly cookie, and forwards it to Express. Browser
+JavaScript never receives or reads the JWT cookie.
 
 ```
 Authorization: Bearer <jwt>
@@ -43,7 +42,7 @@ from `${CLIENT_URL}/api/auth/jwks` and checks the token's `iss`/`aud` against
 
 | Requirement | Value |
 |---|---|
-| Token source | Next.js proxy reads the HTTPOnly Better Auth session and requests `GET {CLIENT_URL}/api/auth/token` |
+| Token source | `src/proxy.ts` reads the Better Auth HTTPOnly session and requests `GET {CLIENT_URL}/api/auth/token`; JWT is stored in an HTTPOnly cookie |
 | Signing algorithm | `EdDSA` (`Ed25519`) by default |
 | Public keys | `GET {CLIENT_URL}/api/auth/jwks` |
 | Protected requests | `401` when the token is missing/invalid, `403` for non-owners |
@@ -51,11 +50,17 @@ from `${CLIENT_URL}/api/auth/jwks` and checks the token's `iss`/`aud` against
 ### 3. Booking Endpoints (Challenge 2 Double-Booking Prevention)
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/bookings` | Submit a booking with **server-side price calculation** and overlap collision check (409) 🔒 JWT required |
-| `GET` | `/bookings` | Retrieve the signed-in user's customer bookings 🔒 JWT required |
-| `GET` | `/bookings?hostEmail=true` | Retrieve bookings for the signed-in host 🔒 JWT required |
-| `PATCH` | `/bookings/:id/cancel` | Cancel your own pending booking 🔒 JWT required |
-| `PATCH` | `/bookings/:id/status` | Host confirms pending or completes confirmed bookings 🔒 JWT required |
+| `GET` | `/api/bookings/availability?studioId=...&bookingDate=...` | Fetch booked times for one studio and date (public) |
+| `POST` | `/api/bookings` | Submit a booking with **server-side price calculation** and overlap collision check (409) 🔒 JWT required |
+| `GET` | `/api/bookings` | Retrieve the signed-in user's customer bookings 🔒 JWT required |
+| `GET` | `/api/bookings?ownerEmail=true` | Retrieve bookings for the signed-in studio owner 🔒 JWT required |
+| `PATCH` | `/api/bookings/:id/cancel` | Cancel your own pending booking 🔒 JWT required |
+| `PATCH` | `/api/bookings/:id/status` | Owner confirms pending or completes confirmed bookings 🔒 JWT required |
+
+### 4. Newsletter
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/newsletter` | Save a valid email address in the `newsletterSubscriptions` collection; duplicate email returns `409` |
 
 ---
 
