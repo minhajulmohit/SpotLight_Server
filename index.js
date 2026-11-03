@@ -86,7 +86,7 @@ const requireAuth = async (req, res, next) => {
 };
 
 const ownsStudio = (studio, user) =>
-  normalizeEmail(studio?.ownerEmail || studio?.hostEmail) === user.email;
+  normalizeEmail(studio?.hostEmail) === user.email;
 
 // Test API
 app.get("/", (req, res) => {
@@ -111,9 +111,9 @@ app.post("/add-new-studio", requireAuth, async (req, res) => {
   const data = {
     ...req.body,
     hostEmail: req.user.email,
-    ownerEmail: req.user.email,
   };
   delete data._id;
+  delete data.ownerEmail;
   const result = await studiosCollection.insertOne(data);
   res.send(result);
 });
@@ -270,7 +270,7 @@ app.post("/bookings", requireAuth, async (req, res) => {
       studioId: String(studioId),
       studioTitle: studio.title,
       hostName: studio.hostName || studio.host?.name || "Host",
-      hostEmail: normalizeEmail(studio.hostEmail || studio.ownerEmail),
+      hostEmail: normalizeEmail(studio.hostEmail),
       customerName:
         String(customerName ?? "").trim() || req.user.name || "Guest Creator",
       customerEmail: req.user.email,
