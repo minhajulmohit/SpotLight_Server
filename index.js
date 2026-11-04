@@ -8,13 +8,10 @@ const app = express();
 
 const PORT = process.env.PORT || 8000;
 
-const CLIENT_ORIGINS = (process.env.CLIENT_URL || "http://localhost:3000")
-  .split(",")
-  .map((url) => url.trim().replace(/\/+$/, ""))
-  .filter(Boolean);
-const BETTER_AUTH_ORIGIN = CLIENT_ORIGINS[0];
+const CLIENT_ORIGINS = process.env.CLIENT_URL || "http://localhost:3000";
 
 app.use(express.json());
+
 app.use(
   cors({
     origin: CLIENT_ORIGINS,
@@ -23,18 +20,17 @@ app.use(
 );
 
 const client = new MongoClient(process.env.MONGODB_URI);
-let mongoConnection;
 
 export async function connectToMongoDB() {
-  if (!mongoConnection) {
-    mongoConnection = client.connect().catch((error) => {
-      mongoConnection = undefined;
-      console.error("MongoDB connection failed:", error);
-      throw error;
-    });
+  try {
+    await client.connect();
+    console.log("You successfully connected to MongoDB!");
+    return client;
+  } catch (err) {
+    console.dir(err);
   }
-  return mongoConnection;
 }
+
 const db = client.db("spotlight");
 const studiosCollection = db.collection("studios");
 const bookingsCollection = db.collection("bookings");
@@ -42,50 +38,53 @@ const newsletterSubscriptionsCollection = db.collection(
   "newsletterSubscriptions",
 );
 
-// Verify Better Auth JWKS
-
 const normalizeEmail = (value) =>
   String(value ?? "")
     .trim()
     .toLowerCase();
 
-const BETTER_AUTH_JWKS = createRemoteJWKSet(
-  new URL("/api/auth/jwks", BETTER_AUTH_ORIGIN),
-);
+// Verify Better Auth JWKS
 
-const requireAuth = async (req, res, next) => {
-  const [scheme, token] = String(req.headers.authorization ?? "").split(/\s+/);
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
 
-  if (scheme?.toLowerCase() !== "bearer" || !token) {
-    return res.status(401).json({
-      message: "Unauthorized.",
-    });
+  if (!authHeader) {
+    return res.status(401).send({ msg: "Unauthorized" });
   }
+
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).send({ msg: "Unauthorized" });
+  }
+
+  const JWKS = createRemoteJWKSet(new URL(`${CLIENT_ORIGINS}/api/auth/jwks`));
 
   try {
-    const { payload } = await jwtVerify(token, BETTER_AUTH_JWKS, {
-      issuer: BETTER_AUTH_ORIGIN,
-      audience: BETTER_AUTH_ORIGIN,
-    });
-
-    const email = normalizeEmail(payload.email);
-    if (!email) {
-      return res.status(401).json({
-        message: "Unauthorized. The token is missing an email claim.",
-      });
-    }
-
-    req.user = {
-      id: String(payload.sub ?? ""),
-      email,
-      name: String(payload.name ?? "").trim(),
-    };
-    return next();
-  } catch {
-    return res.status(401).json({
-      message: "Unauthorized. The token is invalid or has expired.",
-    });
+    const { payload } = await jwtVerify(token, JWKS);
+    req.authPayload = payload;
+  } catch (error) {
+    return res.status(401).send({ msg: "Server Error (token issue)" });
   }
+
+  next();
+};
+
+//Token এর ভিতর থেকে ইউজার বের করা
+
+const verifyUser = (req, res, next) => {
+  const payload = req.authPayload;
+  const email = normalizeEmail(payload?.email);
+
+  if (!email) {
+    return res.status(401).send({ msg: "Unauthorized" });
+  }
+
+  req.user = {
+    id: String(payload.sub ?? ""),
+    email,
+    name: String(payload.name ?? "").trim(),
+  };
+  return next();
 };
 
 const ownsStudio = (studio, user) =>
@@ -96,21 +95,13 @@ app.get("/", (req, res) => {
   res.send("Backend Server is Running...!");
 });
 
-app.use(async (req, res, next) => {
-  try {
-    await connectToMongoDB();
-    next();
-  } catch (error) {
-    console.error("Database unavailable:", error);
-    res.status(503).json({ message: "Database unavailable." });
-  }
-});
+connectToMongoDB();
 
 // ===========
 // Studio APIs
 // ===========
 
-app.post("/api/studios", requireAuth, async (req, res) => {
+app.post("/api/studios", verifyToken, verifyUser, async (req, res) => {
   const data = {
     ...req.body,
     ownerName: req.user.name,
@@ -121,11 +112,13 @@ app.post("/api/studios", requireAuth, async (req, res) => {
   res.send(result);
 });
 
+// সব স্টুডিও
 app.get("/api/studios", async (req, res) => {
   const result = await studiosCollection.find().toArray();
   res.send(result);
 });
 
+//হোম পেজ এর ফিচার সেকশনের স্টুডিও
 app.get("/api/studios/featured", async (req, res) => {
   const result = await studiosCollection
     .find()
@@ -135,16 +128,16 @@ app.get("/api/studios/featured", async (req, res) => {
   res.send(result);
 });
 
+// একটি নির্দিষ্ট স্টুডিও
 app.get("/api/studios/:id", async (req, res) => {
   const { id } = req.params;
-  if (!/^[\da-f]{24}$/i.test(id)) return res.sendStatus(404);
-
   const result = await studiosCollection.findOne({ _id: new ObjectId(id) });
-  if (!result) return res.sendStatus(404);
+  if (!result) return res.status(404).send({ msg: "Studio not found" });
   res.send(result);
 });
 
-app.delete("/api/studios/:id", requireAuth, async (req, res) => {
+// স্টুডিও ডিলিট করা
+app.delete("/api/studios/:id", verifyToken, verifyUser, async (req, res) => {
   const { id } = req.params;
   const studio = await studiosCollection.findOne({ _id: new ObjectId(id) });
   if (!studio || !ownsStudio(studio, req.user)) return res.sendStatus(403);
@@ -153,7 +146,8 @@ app.delete("/api/studios/:id", requireAuth, async (req, res) => {
   res.send(result);
 });
 
-app.patch("/api/studios/:id", requireAuth, async (req, res) => {
+// স্টুডিও এডিট করা
+app.patch("/api/studios/:id", verifyToken, verifyUser, async (req, res) => {
   const { id } = req.params;
   const studio = await studiosCollection.findOne({ _id: new ObjectId(id) });
   if (!studio || !ownsStudio(studio, req.user)) return res.sendStatus(403);
@@ -162,6 +156,7 @@ app.patch("/api/studios/:id", requireAuth, async (req, res) => {
   delete updates._id;
   delete updates.ownerEmail;
   delete updates.ownerName;
+
   const result = await studiosCollection.updateOne(
     { _id: new ObjectId(id) },
     { $set: updates },
@@ -169,39 +164,38 @@ app.patch("/api/studios/:id", requireAuth, async (req, res) => {
   res.send(result);
 });
 
+//বুক করা আছে কি নেই তা খুঁজে বের করা
 app.get("/api/bookings/availability", async (req, res) => {
-  const studioId = String(req.query.studioId ?? "");
-  const bookingDate = String(req.query.bookingDate ?? "");
+  const { studioId, bookingDate } = req.query;
+
   if (!studioId || !bookingDate) return res.sendStatus(400);
 
-  const bookings = await bookingsCollection
-    .find(
-      {
-        studioId,
-        bookingDate,
-        status: { $in: ["Pending", "Confirmed"] },
-      },
-      { projection: { _id: 0, startTime: 1, endTime: 1 } },
-    )
-    .toArray();
+  const query = {
+    studioId: studioId,
+    bookingDate: bookingDate,
+    status: { $ne: "Cancelled" },
+  };
+
+  const bookings = await bookingsCollection.find(query).toArray();
+
   res.send(bookings);
 });
 
 // Booking APIs (with Double-Booking Prevention)
+const toMinutes = (timeString) => {
+  if (!timeString) return null;
 
-const toMinutes = (value) => {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(String(value ?? "").trim());
-  if (!match) return null;
+  const parts = timeString.split(":");
+  if (parts.length !== 2) return null;
 
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours > 23 || minutes > 59) return null;
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1]);
 
   return hours * 60 + minutes;
 };
 
 // Create a new booking
-app.post("/api/bookings", requireAuth, async (req, res) => {
+app.post("/api/bookings", verifyToken, verifyUser, async (req, res) => {
   try {
     const { studioId, bookingDate, startTime, endTime, customerName } =
       req.body;
@@ -212,28 +206,25 @@ app.post("/api/bookings", requireAuth, async (req, res) => {
         .json({ message: "Missing required booking details." });
     }
 
-    let studio;
-    try {
-      studio = await studiosCollection.findOne({ _id: new ObjectId(studioId) });
-    } catch {
-      return res.status(400).json({ message: "Invalid studio ID." });
-    }
+    const studio = await studiosCollection.findOne({
+      _id: new ObjectId(studioId),
+    });
     if (!studio) {
-      return res.status(404).json({ message: "Studio not found." });
+      return res.status(404).send({ message: "Studio not Found" });
     }
 
     const startMinutes = toMinutes(startTime);
     const endMinutes = toMinutes(endTime);
 
-    if (startMinutes === null || endMinutes === null) {
+    if (
+      startMinutes === null ||
+      endMinutes === null ||
+      endMinutes <= startMinutes
+    ) {
       return res.status(400).json({
-        message: "Start time and end time must use the HH:MM format.",
+        message:
+          "Start time and end time must use the HH:MM format and End time must be later than the start time",
       });
-    }
-    if (endMinutes <= startMinutes) {
-      return res
-        .status(400)
-        .json({ message: "End time must be later than the start time." });
     }
 
     // Double-Booking Prevention
@@ -263,19 +254,18 @@ app.post("/api/bookings", requireAuth, async (req, res) => {
 
     const totalHours = (endMinutes - startMinutes) / 60;
 
-    const hourlyRate = Number(studio.hourlyRate ?? studio.rate ?? 0);
+    const hourlyRate = Number(studio.hourlyRate || studio.rate || 0);
     const securityDeposit = Number(
-      studio.securityDeposit ?? studio.deposit ?? 0,
+      studio.securityDeposit || studio.deposit || 0,
     );
-    const totalPrice = Math.round(totalHours * hourlyRate * 100) / 100;
+    const totalPrice = Number((totalHours * hourlyRate).toFixed(2));
 
     const newBooking = {
       studioId: String(studioId),
       studioTitle: studio.title,
       ownerName: studio.ownerName || "Studio Owner",
       ownerEmail: normalizeEmail(studio.ownerEmail),
-      customerName:
-        String(customerName ?? "").trim() || req.user.name || "Guest Creator",
+      customerName: String(customerName || req.user.name),
       customerEmail: req.user.email,
       bookingDate: String(bookingDate),
       startTime: String(startTime),
@@ -300,7 +290,8 @@ app.post("/api/bookings", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/bookings", requireAuth, async (req, res) => {
+//লগইন করা ইউজারের  বুকিংয়ের তালিকা দেখা
+app.get("/api/bookings", verifyToken, verifyUser, async (req, res) => {
   const { ownerEmail } = req.query;
   const query = ownerEmail
     ? { ownerEmail: req.user.email }
@@ -314,54 +305,79 @@ app.get("/api/bookings", requireAuth, async (req, res) => {
 });
 
 // Cancel a pending booking
-app.patch("/api/bookings/:id/cancel", requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const result = await bookingsCollection.updateOne(
-    {
-      _id: new ObjectId(id),
-      customerEmail: req.user.email,
-      status: "Pending",
-    },
-    { $set: { status: "Cancelled", cancelledAt: new Date() } },
-  );
+app.patch(
+  "/api/bookings/:id/cancel",
+  verifyToken,
+  verifyUser,
+  async (req, res) => {
+    const { id } = req.params;
+    const booking = await bookingsCollection.findOne({ _id: new ObjectId(id) });
 
-  if (!result.matchedCount) return res.sendStatus(403);
-  res.send(result);
-});
+    if (!booking || booking.customerEmail !== req.user.email) {
+      return res.sendStatus(403);
+    }
+
+    if (booking.status !== "Pending") {
+      return res.sendStatus(400);
+    }
+
+    const result = await bookingsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "Cancelled" } },
+    );
+
+    res.send(result);
+  },
+);
 
 // Update status (the owner confirms or completes a reservation)
-app.patch("/api/bookings/:id/status", requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const booking = await bookingsCollection.findOne({ _id: new ObjectId(id) });
-  if (!booking || normalizeEmail(booking.ownerEmail) !== req.user.email)
-    return res.sendStatus(403);
-  const nextStatus = req.body.status;
-  const currentStatus =
-    nextStatus === "Confirmed"
-      ? "Pending"
-      : nextStatus === "Completed"
-        ? "Confirmed"
-        : null;
-  if (!currentStatus || booking.status !== currentStatus)
-    return res.sendStatus(400);
+app.patch(
+  "/api/bookings/:id/status",
+  verifyToken,
+  verifyUser,
+  async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
 
-  const result = await bookingsCollection.updateOne(
-    { _id: new ObjectId(id), status: currentStatus },
-    { $set: { status: nextStatus, updatedAt: new Date() } },
-  );
-  res.send(result);
-});
+    const booking = await bookingsCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!booking) {
+      return res.status(404).send({ message: "Booking not Found" });
+    }
+
+    if (!["Confirmed", "Completed"].includes(status)) {
+      return res.status(400).json({ message: "Invalid booking status." });
+    }
+
+    if (booking.ownerEmail !== req.user.email) {
+      return res.status(403).send({ message: "Unauthorized" });
+    }
+
+    if (status === "Confirmed" && booking.status !== "Pending") {
+      return res
+        .status(400)
+        .send({ message: "Only pending bookings can confirmed." });
+    }
+
+    if (status === "Completed" && booking.status !== "Confirmed") {
+      return res
+        .status(400)
+        .send({ message: "Only confirmed booking can complete." });
+    }
+
+    const result = await bookingsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: status, updatedAt: new Date() } },
+    );
+
+    res.send(result);
+  },
+);
 
 app.post("/api/newsletter", async (req, res) => {
   const email = normalizeEmail(req.body?.email);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!email) {
     return res.status(400).json({ message: "Enter a valid email address." });
-  }
-
-  const existingSubscription =
-    await newsletterSubscriptionsCollection.findOne({ email });
-  if (existingSubscription) {
-    return res.status(409).json({ message: "This email is already subscribed." });
   }
 
   const result = await newsletterSubscriptionsCollection.insertOne({
@@ -370,7 +386,7 @@ app.post("/api/newsletter", async (req, res) => {
   });
   res.status(201).json({
     message: "Thank you for subscribing.",
-    insertedId: result.insertedId,
+    result,
   });
 });
 
