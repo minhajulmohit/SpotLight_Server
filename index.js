@@ -173,10 +173,14 @@ app.get("/api/bookings/availability", async (req, res) => {
   const query = {
     studioId: studioId,
     bookingDate: bookingDate,
-    status: { $ne: "Cancelled" },
+    status: { $in: ["Pending", "Confirmed"] },
   };
 
-  const bookings = await bookingsCollection.find(query).toArray();
+  const bookings = await bookingsCollection
+    .find(query, {
+      projection: { _id: 0, startTime: 1, endTime: 1 },
+    })
+    .toArray();
 
   res.send(bookings);
 });
