@@ -95,7 +95,7 @@ app.get("/", (req, res) => {
   res.send("Backend Server is Running...!");
 });
 
-connectToMongoDB();
+// connectToMongoDB();
 
 // ===========
 // Studio APIs
